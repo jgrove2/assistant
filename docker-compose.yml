@@ -1,27 +1,90 @@
 services:
-  bot:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+
+  audio:
+    build:
+      context: services/audio
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    depends_on:
+      - mosquitto
+    devices:
+      - /dev/snd:/dev/snd
+    environment:
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+      - MQTT_HOST=mosquitto
+    volumes:
+      - /run/user/1000/pulse/native:/run/user/1000/pulse/native
+    env_file: .env
+
+  stt:
+    build:
+      context: services/stt
+      dockerfile: Dockerfile
+    platform: linux/amd64
+
+  camera:
+    build:
+      context: services/camera
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+    volumes:
+      - ./faces:/app/faces
+    env_file: .env
+
+  orchestrator:
     build:
       context: .
       dockerfile: Dockerfile
-    platform: linux/amd64  # change to linux/arm64 for ARM hosts
+    platform: linux/amd64
     env_file: .env
     depends_on:
+      - mosquitto
+      - audio
+      - stt
+      - camera
       - piper
-    devices:
-      - /dev/snd:/dev/snd
-      - /dev/video0:/dev/video0
-      - /dev/video1:/dev/video1
     environment:
       - PULSE_SERVER=unix:/run/user/1000/pulse/native
-      - ALSA_CARD=0
+      - MQTT_HOST=mosquitto
+      - AUDIO_URL=http://audio:5001
+      - STT_URL=http://stt:5002
+      - CAMERA_URL=http://camera:5003
+      - PIPER_URL=http://piper:5000
     volumes:
       - /run/user/1000/pulse/native:/run/user/1000/pulse/native
-      - ./faces:/app/faces
+    devices:
+      - /dev/snd:/dev/snd
 
   piper:
     build:
-      context: ./piper
+      context: ./services/piper
       dockerfile: Dockerfile
-    platform: linux/amd64  # change to linux/arm64 for ARM hosts
+    platform: linux/amd64
     expose:
       - "5000"
+
+  logging:
+    build:
+      context: ./services/logging
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    depends_on:
+      - mosquitto
+    environment:
+      - MQTT_HOST=mosquitto
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./faces:/app/faces
+      - logging_data:/app/data
+    ports:
+      - "5004:5004"
+
+volumes:
+  logging_data:

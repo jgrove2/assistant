@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bot Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #0f3460;
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px solid #e94560;
+    }
+
+    header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: #fff;
+    }
+
+    #clock {
+      font-size: 0.95rem;
+      color: #a0a0c0;
+    }
+
+    .status-bar {
+      padding: 0.75rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+    }
+
+    .status-bar span {
+      font-size: 0.85rem;
+      color: #a0a0c0;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .state-pill {
+      display: inline-block;
+      padding: 0.25rem 0.85rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      background: #555;
+      color: #fff;
+      transition: background 0.3s;
+    }
+
+    .state-pill.idle       { background: #555; }
+    .state-pill.listening  { background: #2563eb; }
+    .state-pill.thinking   { background: #d97706; }
+    .state-pill.speaking   { background: #16a34a; }
+
+    main {
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      overflow: hidden;
+    }
+
+    .card-header {
+      background: #0f3460;
+      padding: 0.65rem 1rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #c0c8e0;
+    }
+
+    .card-body {
+      padding: 0;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    thead th {
+      background: #1a2a4a;
+      padding: 0.55rem 0.75rem;
+      text-align: left;
+      font-weight: 600;
+      color: #8090b0;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.06em;
+      position: sticky;
+      top: 0;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid #0f3460;
+      transition: background 0.15s;
+    }
+
+    tbody tr:hover { background: #1e2e50; }
+
+    tbody td {
+      padding: 0.5rem 0.75rem;
+      vertical-align: top;
+      color: #d0d8f0;
+    }
+
+    tbody td.ts {
+      color: #6070a0;
+      white-space: nowrap;
+      font-size: 0.8rem;
+      font-family: monospace;
+    }
+
+    .event-list {
+      list-style: none;
+      padding: 0.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .event-item {
+      background: #1a2a4a;
+      border-radius: 4px;
+      padding: 0.4rem 0.65rem;
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #a0c0e0;
+      word-break: break-all;
+      border-left: 3px solid #e94560;
+    }
+
+    .event-item .evt-ts {
+      color: #506080;
+      margin-right: 0.5rem;
+    }
+
+    .event-item .evt-topic {
+      color: #e94560;
+      font-weight: 700;
+      margin-right: 0.4rem;
+    }
+
+    .stats-row { display: flex; gap: 1.5rem; }
+
+    .stat-card {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+      flex: 0 0 auto;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    }
+
+    .stat-card .label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6070a0;
+      margin-bottom: 0.3rem;
+    }
+
+    .stat-card .value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #e94560;
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #1a1a2e; }
+    ::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Bot Dashboard</h1>
+  <span id="clock"></span>
+</header>
+
+<div class="status-bar">
+  <span>State</span>
+  <span class="state-pill idle" id="state-pill">idle</span>
+</div>
+
+<main>
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="label">Registered Faces</div>
+      <div class="value" id="face-count">{{ face_count }}</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-header">Conversations</div>
+      <div class="card-body">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>You said</th>
+              <th>Bot replied</th>
+            </tr>
+          </thead>
+          <tbody id="conv-tbody">
+            {% for c in conversations %}
+            <tr>
+              <td class="ts">{{ "%.3f"|format(c.ts) }}</td>
+              <td>{{ c.user_text }}</td>
+              <td>{{ c.bot_text }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Event Feed</div>
+      <div class="card-body">
+        <ul class="event-list" id="event-list">
+          {% for e in events %}
+          <li class="event-item">
+            <span class="evt-ts">{{ "%.3f"|format(e.ts) }}</span>
+            <span class="evt-topic">{{ e.topic }}</span>
+            <span class="evt-payload">{{ e.payload }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Container Stats</div>
+    <div class="card-body">
+      <table>
+        <thead>
+          <tr>
+            <th>Container</th>
+            <th>CPU %</th>
+            <th>RAM (MB)</th>
+            <th>RAM Limit (MB)</th>
+            <th>RAM %</th>
+          </tr>
+        </thead>
+        <tbody id="stats-tbody">
+          {% for s in container_stats %}
+          <tr>
+            <td>{{ s.name }}</td>
+            <td>{{ s.cpu_pct }}</td>
+            <td>{{ s.mem_mb }}</td>
+            <td>{{ s.mem_limit_mb }}</td>
+            <td>{{ s.mem_pct }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+  function fmtTime(ts) {
+    const d = new Date(ts * 1000);
+    return d.toTimeString().slice(0, 8);
+  }
+
+  const clockEl = document.getElementById("clock");
+  function tickClock() {
+    clockEl.textContent = new Date().toTimeString().slice(0, 8);
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  const statePill = document.getElementById("state-pill");
+  function updateState(payload) {
+    const s = payload.trim().toLowerCase();
+    statePill.textContent = s;
+    statePill.className = "state-pill " + s;
+  }
+
+  const convTbody = document.getElementById("conv-tbody");
+  function prependConversation(msg) {
+    let data;
+    try { data = JSON.parse(msg.payload); } catch (e) { return; }
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="ts">${fmtTime(msg.ts)}</td>` +
+      `<td>${escHtml(data.user || "")}</td>` +
+      `<td>${escHtml(data.bot || "")}</td>`;
+    convTbody.insertBefore(tr, convTbody.firstChild);
+  }
+
+  const eventList = document.getElementById("event-list");
+  function prependEvent(msg) {
+    if (eventList.children.length >= 100) {
+      eventList.removeChild(eventList.lastChild);
+    }
+    const li = document.createElement("li");
+    li.className = "event-item";
+    li.innerHTML =
+      `<span class="evt-ts">${fmtTime(msg.ts)}</span>` +
+      `<span class="evt-topic">${escHtml(msg.topic)}</span>` +
+      `<span class="evt-payload">${escHtml(msg.payload)}</span>`;
+    eventList.insertBefore(li, eventList.firstChild);
+  }
+
+  const statsTbody = document.getElementById("stats-tbody");
+  function updateStats(stats) {
+    statsTbody.innerHTML = "";
+    for (const s of stats) {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        `<td>${escHtml(s.name)}</td>` +
+        `<td>${s.cpu_pct}</td>` +
+        `<td>${s.mem_mb}</td>` +
+        `<td>${s.mem_limit_mb}</td>` +
+        `<td>${s.mem_pct}</td>`;
+      statsTbody.appendChild(tr);
+    }
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  const evtSource = new EventSource("/stream");
+  evtSource.onerror = () => {
+    console.warn("EventSource connection error, will retry...");
+  };
+  evtSource.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.topic === "bot/state") updateState(msg.payload);
+      else if (msg.topic === "bot/conversation") prependConversation(msg);
+      else if (msg.topic === "stats") updateStats(JSON.parse(msg.payload));
+      prependEvent(msg);
+    } catch (err) {
+      console.error("Failed to parse SSE message:", err);
+    }
+  };
+</script>
+
+</body>
+</html>

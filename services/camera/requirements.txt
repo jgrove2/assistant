@@ -1,0 +1,4 @@
+opencv-python-headless
+face-recognition
+numpy
+flask

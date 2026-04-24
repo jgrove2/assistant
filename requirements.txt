@@ -1,9 +1,6 @@
-openwakeword
-faster-whisper
 httpx
 pyaudio
 numpy
 pytest
 pytest-benchmark
-opencv-python-headless
-face-recognition
+paho-mqtt

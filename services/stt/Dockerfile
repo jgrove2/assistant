@@ -1,22 +1,16 @@
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y \
-    portaudio19-dev \
     gcc \
-    python3-dev \
-    libasound2-plugins \
-    pulseaudio-utils \
     && rm -rf /var/lib/apt/lists/*
-
-RUN echo 'pcm.!default { type pulse }\nctl.!default { type pulse }' > /etc/asound.conf
 
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/ ./src/
+COPY server.py .
 
 RUN useradd -m -u 1000 appuser
 USER appuser
 
-CMD ["python", "-m", "src.main"]
+CMD ["python", "server.py"]

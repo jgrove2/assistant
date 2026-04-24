@@ -2,6 +2,8 @@ import json
 import logging
 import os
 from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -19,6 +21,13 @@ SYSTEM_PROMPT = os.environ.get(
 )
 
 
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
 class LLMClient:
     def __init__(
         self,
@@ -28,21 +37,37 @@ class LLMClient:
         self._api_key = api_key
         self._model = model
 
-    def stream(self, prompt: str, context: str = "") -> Iterator[str]:
-        logger.debug("LLM system prompt: %s", SYSTEM_PROMPT + ("\n\n" + context if context else ""))
-        logger.info("LLM user prompt: %s", prompt)
+    def build_messages(self, prompt: str, context: str = "") -> list[dict[str, Any]]:
+        system = SYSTEM_PROMPT + ("\n\n" + context if context else "")
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
+
+    def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[str] | ToolCall:
+        logger.info("LLM request with %d messages", len(messages))
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
+        payload: dict[str, Any] = {
             "model": self._model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT + ("\n\n" + context if context else "")},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": messages,
             "stream": True,
         }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        chunks: list[str] = []
+        tool_call_id = ""
+        tool_call_name = ""
+        tool_call_args_buf = ""
+
         with httpx.Client(timeout=60.0) as client:
             with client.stream("POST", OPENROUTER_URL, headers=headers, json=payload) as response:
                 try:
@@ -58,11 +83,31 @@ class LLMClient:
                         break
                     try:
                         parsed = json.loads(data)
-                        content = parsed["choices"][0]["delta"].get("content")
+                        delta = parsed["choices"][0]["delta"]
+                        content = delta.get("content")
                         if content:
-                            yield content
-                    except (json.JSONDecodeError, KeyError, IndexError):
+                            chunks.append(content)
+                            continue
+                        tool_calls = delta.get("tool_calls")
+                        if tool_calls:
+                            tc = tool_calls[0]
+                            if tc.get("id"):
+                                tool_call_id = tc["id"]
+                            if tc.get("function", {}).get("name"):
+                                tool_call_name = tc["function"]["name"]
+                            tool_call_args_buf += tc.get("function", {}).get("arguments", "")
+                    except (json.JSONDecodeError, KeyError, IndexError) as e:
+                        logger.debug("SSE parse error (%s): %s", type(e).__name__, line)
                         continue
+
+        if tool_call_name:
+            try:
+                args = json.loads(tool_call_args_buf) if tool_call_args_buf else {}
+            except json.JSONDecodeError:
+                args = {}
+            return ToolCall(id=tool_call_id, name=tool_call_name, arguments=args)
+
+        return iter(chunks)
 
 
 def test_stream_yields_chunks() -> None:
@@ -86,7 +131,7 @@ def test_stream_yields_chunks() -> None:
 
     with patch("src.llm_client.httpx.Client", return_value=mock_client):
         client = LLMClient(api_key="test", model="test-model")
-        chunks = list(client.stream("Hi"))
+        chunks = list(client.stream(messages=[{"role": "user", "content": "Hi"}]))
 
     assert chunks == ["Hello", " world"]
 
@@ -112,7 +157,7 @@ def test_stream_handles_malformed_json() -> None:
 
     with patch("src.llm_client.httpx.Client", return_value=mock_client):
         client = LLMClient(api_key="test", model="test-model")
-        chunks = list(client.stream("Hi"))
+        chunks = list(client.stream(messages=[{"role": "user", "content": "Hi"}]))
 
     assert chunks == ["ok"]
 
@@ -135,7 +180,7 @@ def test_stream_raises_on_http_error() -> None:
     with patch("src.llm_client.httpx.Client", return_value=mock_client):
         client = LLMClient(api_key="test", model="test-model")
         try:
-            list(client.stream("Hi"))
+            list(client.stream(messages=[{"role": "user", "content": "Hi"}]))
             assert False, "Expected HTTPStatusError"
         except httpx.HTTPStatusError:
             pass
@@ -162,7 +207,7 @@ def test_stream_skips_missing_choices_key() -> None:
 
     with patch("src.llm_client.httpx.Client", return_value=mock_client):
         client = LLMClient(api_key="test", model="test-model")
-        chunks = list(client.stream("Hi"))
+        chunks = list(client.stream(messages=[{"role": "user", "content": "Hi"}]))
 
     assert chunks == ["ok"]
 
@@ -187,6 +232,89 @@ def test_stream_done_ends_iteration() -> None:
 
     with patch("src.llm_client.httpx.Client", return_value=mock_client):
         client = LLMClient(api_key="test", model="test-model")
-        chunks = list(client.stream("Hi"))
+        chunks = list(client.stream(messages=[{"role": "user", "content": "Hi"}]))
 
     assert chunks == []
+
+
+def test_stream_returns_tool_call() -> None:
+    from unittest.mock import MagicMock, patch
+
+    sse_lines = [
+        'data: {"choices": [{"delta": {"tool_calls": [{"id": "call_1", "function": {"name": "web_search", "arguments": ""}}]}}]}',
+        'data: {"choices": [{"delta": {"tool_calls": [{"id": "", "function": {"name": "", "arguments": "{\\"query\\": \\"capital of France\\"}"}}]}}]}',
+        "data: [DONE]",
+    ]
+
+    mock_response = MagicMock()
+    mock_response.iter_lines.return_value = iter(sse_lines)
+    mock_response.__enter__ = lambda s: s
+    mock_response.__exit__ = MagicMock(return_value=False)
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value = mock_response
+    mock_client.__enter__ = lambda s: s
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("src.llm_client.httpx.Client", return_value=mock_client):
+        client = LLMClient(api_key="test", model="test-model")
+        result = client.stream(messages=[{"role": "user", "content": "Hi"}])
+
+    assert isinstance(result, ToolCall)
+    assert result.name == "web_search"
+    assert result.arguments == {"query": "capital of France"}
+
+
+def test_stream_partial_tool_call_arguments() -> None:
+    from unittest.mock import MagicMock, patch
+
+    sse_lines = [
+        'data: {"choices": [{"delta": {"tool_calls": [{"id": "c1", "function": {"name": "web_search", "arguments": "{\\"que"}}]}}]}',
+        'data: {"choices": [{"delta": {"tool_calls": [{"id": "", "function": {"name": "", "arguments": "ry\\": \\"Paris\\"}"}}]}}]}',
+        "data: [DONE]",
+    ]
+
+    mock_response = MagicMock()
+    mock_response.iter_lines.return_value = iter(sse_lines)
+    mock_response.__enter__ = lambda s: s
+    mock_response.__exit__ = MagicMock(return_value=False)
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value = mock_response
+    mock_client.__enter__ = lambda s: s
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("src.llm_client.httpx.Client", return_value=mock_client):
+        client = LLMClient(api_key="test", model="test-model")
+        result = client.stream(messages=[{"role": "user", "content": "Hi"}])
+
+    assert isinstance(result, ToolCall)
+    assert result.name == "web_search"
+    assert result.arguments == {"query": "Paris"}
+
+
+def test_stream_tool_call_invalid_json_args_returns_empty_dict() -> None:
+    from unittest.mock import MagicMock, patch
+
+    sse_lines = [
+        'data: {"choices": [{"delta": {"tool_calls": [{"id": "c1", "function": {"name": "get_datetime", "arguments": "not-json"}}]}}]}',
+        "data: [DONE]",
+    ]
+
+    mock_response = MagicMock()
+    mock_response.iter_lines.return_value = iter(sse_lines)
+    mock_response.__enter__ = lambda s: s
+    mock_response.__exit__ = MagicMock(return_value=False)
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value = mock_response
+    mock_client.__enter__ = lambda s: s
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("src.llm_client.httpx.Client", return_value=mock_client):
+        client = LLMClient(api_key="test", model="test-model")
+        result = client.stream(messages=[{"role": "user", "content": "Hi"}])
+
+    assert isinstance(result, ToolCall)
+    assert result.name == "get_datetime"
+    assert result.arguments == {}
