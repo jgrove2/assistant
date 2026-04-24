@@ -1,0 +1,4 @@
+.env
+.pytest_cache
+faces/images
+faces/known_faces.json

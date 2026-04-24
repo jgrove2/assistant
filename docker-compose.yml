@@ -1,0 +1,27 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64  # change to linux/arm64 for ARM hosts
+    env_file: .env
+    depends_on:
+      - piper
+    devices:
+      - /dev/snd:/dev/snd
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+    environment:
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+      - ALSA_CARD=0
+    volumes:
+      - /run/user/1000/pulse/native:/run/user/1000/pulse/native
+      - ./faces:/app/faces
+
+  piper:
+    build:
+      context: ./piper
+      dockerfile: Dockerfile
+    platform: linux/amd64  # change to linux/arm64 for ARM hosts
+    expose:
+      - "5000"
